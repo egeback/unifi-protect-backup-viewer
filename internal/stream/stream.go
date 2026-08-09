@@ -206,9 +206,11 @@ func (s *Streamer) CleanCache(ttl time.Duration) {
 	}
 }
 
+// truncate keeps the tail of ffmpeg's output, not the head — the useful
+// error is always at the end, past the version/config banner.
 func truncate(b []byte, n int) string {
 	if len(b) <= n {
 		return string(b)
 	}
-	return string(b[:n]) + "..."
+	return "..." + string(b[len(b)-n:])
 }

@@ -15,14 +15,22 @@ services:
       # Read-only mount of the UniFi-Protect_YYYY-MM-DD export folders.
       - /mnt/tank/nvr/UniFi:/nvr:ro
       - ./data:/data
-      # Only needed for hardware (VAAPI) transcoding on an Intel iGPU.
-      # Omit this and the group_add below if you don't have one — clips
-      # will still work, just without hardware-accelerated transcoding.
+    # Only needed for hardware (VAAPI) transcoding on an Intel iGPU. Must be
+    # under `devices:`, not `volumes:` — a volume bind-mount makes the device
+    # node visible in the container's filesystem but does NOT grant the
+    # cgroup permission to actually open it (fails even as root). Omit this
+    # and the group_add below if you don't have an iGPU — clips still work,
+    # just without hardware-accelerated transcoding.
+    devices:
       - /dev/dri:/dev/dri
     group_add:
       - "44"  # video   — match your host's `getent group video`
       - "107" # render  — match your host's `getent group render`
     env_file:
-      - .env
+      # Compose interpolates $VAR references inside env_file values (not
+      # just in this YAML file) — a bcrypt hash's literal $ characters get
+      # silently swallowed as "variable not set" unless doubled to $$ in
+      # app.env. See app.env.example.
+      - app.env
     environment:
       TZ: UTC

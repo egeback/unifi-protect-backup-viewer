@@ -41,7 +41,7 @@ rsync -az --delete \
 echo "==> docker build on ${HOST}"
 ssh "$HOST" "cd ${REMOTE_DIR} && docker build -t ${IMAGE} ."
 
-echo "==> NOTE: expecting ${REMOTE_DIR}/.env to already exist on the host (created manually, never in git)."
+echo "==> NOTE: expecting ${REMOTE_DIR}/app.env to already exist on the host (created manually, never in git)."
 
 echo "==> docker compose up -d --force-recreate --pull never"
 ssh "$HOST" "cd ${REMOTE_DIR} && docker compose up -d --force-recreate --pull never"

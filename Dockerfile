@@ -10,12 +10,14 @@ RUN CGO_ENABLED=0 go build -o /out/hashpw ./cmd/hashpw
 
 FROM debian:bookworm-slim
 
-# intel-media-va-driver-non-free (iHD) is needed for QuickSync HEVC decode +
-# H.264 encode on the Alder Lake-N iGPU (the free intel-media-va-driver's
-# codec coverage is less reliable for this generation) — non-free/contrib
-# aren't enabled by default in the base image.
-RUN echo "deb http://deb.debian.org/debian bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/non-free.list \
-	&& echo "deb http://deb.debian.org/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list.d/non-free.list \
+# intel-media-va-driver-non-free (iHD) is needed for full QuickSync codec
+# coverage on newer Intel iGPUs (the free intel-media-va-driver's coverage
+# is less reliable) — non-free/contrib aren't enabled by default. The base
+# image uses the deb822 sources format, so add the components to its
+# existing source stanzas rather than creating a second, conflicting
+# classic-format entry for the same repo (apt rejects that: "Conflicting
+# values set for option Signed-By").
+RUN sed -i 's/^Components: main$/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources \
 	&& apt-get update \
 	&& apt-get install --no-install-recommends -y \
 		ffmpeg \

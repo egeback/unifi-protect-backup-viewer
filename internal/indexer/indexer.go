@@ -175,6 +175,14 @@ func (idx *Indexer) scanOnce(ctx context.Context) {
 				DurationS:  int64(parsed.End.Sub(parsed.Start).Seconds()),
 				SizeBytes:  info.Size(),
 				MTime:      info.ModTime(),
+				// Explicit, not left to the SQL column DEFAULT: an INSERT
+				// that lists the column always uses the Go zero value ("")
+				// rather than falling through to DEFAULT, and the
+				// correlator's UnclassifiedClips() query specifically
+				// matches event_source = 'unknown' — leaving this as ""
+				// would make every clip permanently invisible to it.
+				EventType:   "unknown",
+				EventSource: "unknown",
 			}
 			if _, err := idx.db.UpsertClip(clip); err != nil {
 				idx.log.Error("upserting clip failed", "path", clip.Path, "error", err)

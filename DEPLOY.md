@@ -6,13 +6,22 @@ If you can run Docker Compose directly on the machine that has both the
 NVR export mount and (optionally) `/dev/dri` for hardware transcoding:
 
 ```bash
-cp .env.example .env
-# edit .env — see comments in the file
-go run ./cmd/hashpw '<your chosen password>'   # paste the output into AUTH_PASSWORD_HASH
-openssl rand -hex 32                            # paste the output into SESSION_SECRET
+cp app.env.example app.env
+# edit app.env — see comments in the file
+go run ./cmd/hashpw '<your chosen password>' | sed 's/\$/\$\$/g'   # -> AUTH_PASSWORD_HASH (see note below)
+openssl rand -hex 32                                                 # -> SESSION_SECRET
 
 docker compose up --build -d
 ```
+
+The `sed` above isn't optional: Compose interpolates `$VAR` references
+inside `env_file` values, so a raw bcrypt hash's `$` characters get
+silently eaten as "undefined variable" references — corrupting the hash
+into something that will never match any password. Doubling every `$` to
+`$$` is how you get a literal `$` through. If login mysteriously never
+works, `docker compose up` printing `"... variable is not set"` warnings
+for chunks of your hash is the tell; `docker exec <container> sh -c 'echo
+$AUTH_PASSWORD_HASH'` to compare against what `hashpw` actually printed.
 
 Edit `compose.yaml` first if your NVR export lives somewhere other than
 `/mnt/tank/nvr/UniFi`, or if you don't have an Intel iGPU for VAAPI
@@ -54,3 +63,9 @@ surfaces immediately instead of shipping unnoticed.
   render`) or playback in Chrome/Firefox will fail. Safari can still play
   the raw HEVC directly via `/api/clips/:id/download`, which is useful for
   telling "VAAPI broken" apart from "app broken".
+- The container runs as an unprivileged user (UID 1000), not root. If
+  `./data` doesn't already exist, Docker creates it as root when the
+  container first starts, and the app then fails to open its SQLite
+  database (`unable to open database file`, crash-looping). Create it
+  yourself first and hand it to the right owner:
+  `mkdir -p data && chown 1000:1000 data`.

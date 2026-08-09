@@ -83,6 +83,7 @@ func (g *Generator) generate(ctx context.Context, c db.Clip) error {
 		"-ss", seek,
 		"-i", clip.Path,
 		"-frames:v", "1",
+		"-update", "1",
 		"-vf", "scale=480:-2",
 		"-q:v", "4",
 		tmp,
@@ -96,9 +97,11 @@ func (g *Generator) generate(ctx context.Context, c db.Clip) error {
 	return os.Rename(tmp, out)
 }
 
+// truncate keeps the tail of ffmpeg's output, not the head — the useful
+// error is always at the end, past the version/config banner.
 func truncate(b []byte, n int) string {
 	if len(b) <= n {
 		return string(b)
 	}
-	return string(b[:n]) + "..."
+	return "..." + string(b[len(b)-n:])
 }

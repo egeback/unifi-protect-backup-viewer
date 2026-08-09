@@ -40,8 +40,8 @@ instead, similar to Protect's own UI.
 ## Quick start
 
 ```bash
-cp .env.example .env
-# edit .env
+cp app.env.example app.env
+# edit app.env
 go run ./cmd/hashpw '<your chosen password>'   # -> AUTH_PASSWORD_HASH
 openssl rand -hex 32                            # -> SESSION_SECRET
 

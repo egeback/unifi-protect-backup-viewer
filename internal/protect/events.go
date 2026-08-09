@@ -12,13 +12,6 @@ import (
 )
 
 // SmartDetectEvent is our normalized view of a Protect event message.
-// The exact WebSocket payload shape is NOT fully verified against a live
-// event as of writing (the confirmed endpoint stayed open for 90s without
-// producing a message during testing — there was no motion to trigger one).
-// RawJSON is always preserved so nothing is lost if these guessed field
-// names turn out to need adjusting once real traffic is observed; check
-// the "raw event received" debug log line after a real motion event to
-// confirm/fix the field mapping.
 type SmartDetectEvent struct {
 	CameraID string
 	Type     string
@@ -27,26 +20,27 @@ type SmartDetectEvent struct {
 	RawJSON  string
 }
 
-// wsEnvelope covers the couple of plausible shapes Protect's Integration
-// API might wrap events in ("type"/"item" action-style, or a bare event).
+// wsEnvelope and wsItem match the confirmed live payload shape, e.g.:
+//
+//	{"type":"update","item":{"id":"...","modelKey":"event","type":"smartDetectZone",
+//	 "start":1786280798761,"end":1786280805779,"device":"6a6f...046f",
+//	 "smartDetectTypes":["face","person"]}}
+//
+// A single real-world detection produces several messages over its
+// lifetime (an "add", then "update"s as classification refines and again
+// once it ends) — all sharing the same item.id. We don't dedupe these; each
+// just becomes its own row in the events table, which is harmless for
+// correlation purposes (any overlapping row is a match) and self-prunes.
 type wsEnvelope struct {
-	Action string          `json:"action"`
-	Type   string          `json:"type"`
-	Item   json.RawMessage `json:"item"`
-	// Fallback: some messages may be the event itself, unwrapped.
-	ID               string   `json:"id"`
-	Camera           string   `json:"camera"`
-	EventType        string   `json:"type_"` // placeholder, overwritten by best match below
-	SmartDetectTypes []string `json:"smartDetectTypes"`
-	Start            int64    `json:"start"`
-	End              *int64   `json:"end"`
+	Type string `json:"type"` // "add" | "update"
+	Item wsItem `json:"item"`
 }
 
 type wsItem struct {
-	ModelKey         string   `json:"modelKey"`
 	ID               string   `json:"id"`
-	Camera           string   `json:"camera"`
-	Type             string   `json:"type"`
+	ModelKey         string   `json:"modelKey"`
+	Type             string   `json:"type"`   // "smartDetectZone", "smartAudioDetect", ...
+	Device           string   `json:"device"` // camera ID — NOT "camera"
 	SmartDetectTypes []string `json:"smartDetectTypes"`
 	Start            int64    `json:"start"`
 	End              *int64   `json:"end"`
@@ -97,8 +91,6 @@ func connectAndRead(ctx context.Context, c *Client, log *slog.Logger, onEvent fu
 	defer conn.Close()
 
 	log.Info("connected to protect event websocket")
-	backoffReset := make(chan struct{}, 1)
-	backoffReset <- struct{}{}
 
 	go func() {
 		<-ctx.Done()
@@ -120,43 +112,31 @@ func connectAndRead(ctx context.Context, c *Client, log *slog.Logger, onEvent fu
 	}
 }
 
-// extractEvent tries the couple of plausible payload shapes. Returns
-// ok=false for messages that aren't a smart-detect-style event (e.g.
-// keepalives, camera state updates).
+// extractEvent returns ok=false for messages that aren't a classified
+// smart-detect event (e.g. keepalives, camera state updates, or a
+// freshly-added event that hasn't been classified yet — smartDetectTypes
+// starts empty and fills in over the next update).
 func extractEvent(msg []byte) (SmartDetectEvent, bool) {
 	var env wsEnvelope
 	if err := json.Unmarshal(msg, &env); err != nil {
 		return SmartDetectEvent{}, false
 	}
+	item := env.Item
 
-	var item wsItem
-	if len(env.Item) > 0 {
-		if err := json.Unmarshal(env.Item, &item); err != nil {
-			return SmartDetectEvent{}, false
-		}
-	} else {
-		item = wsItem{
-			ID:               env.ID,
-			Camera:           env.Camera,
-			SmartDetectTypes: env.SmartDetectTypes,
-			Start:            env.Start,
-			End:              env.End,
-		}
-	}
-
-	if item.Camera == "" || item.Start == 0 {
+	if item.ModelKey != "event" || item.Device == "" || item.Start == 0 {
 		return SmartDetectEvent{}, false
 	}
 
-	eventType := "motion"
+	eventType := item.Type
 	if len(item.SmartDetectTypes) > 0 {
 		eventType = item.SmartDetectTypes[0]
-	} else if item.Type != "" {
-		eventType = item.Type
+	}
+	if eventType == "" {
+		return SmartDetectEvent{}, false
 	}
 
 	result := SmartDetectEvent{
-		CameraID: item.Camera,
+		CameraID: item.Device,
 		Type:     eventType,
 		Start:    time.UnixMilli(item.Start),
 		RawJSON:  string(msg),

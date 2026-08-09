@@ -22,18 +22,26 @@ instead, similar to Protect's own UI.
 - Indexes `UniFi-Protect_YYYY-MM-DD/*.mp4` folders and reads camera name +
   start/end time straight out of the filename — no separate database of
   your camera layout to maintain.
-- Optionally listens to Protect's real-time Integration API event
-  WebSocket to tag new clips with actual smart-detect types (person /
-  vehicle / animal / ...). Clips that predate the listener (or that
-  Protect's own retention has already aged out) fall back to a
-  duration-based guess instead — see [DEPLOY.md](DEPLOY.md) for why a real
-  historical backfill isn't possible with the API as it exists today.
+- Listens to Protect's real-time Integration API event WebSocket to tag new
+  clips with actual smart-detect types (person / vehicle / animal / face /
+  license plate / audio alarms). A single detection can carry several types
+  at once (e.g. face+person+vehicle+licensePlate for one car arriving) —
+  the clip's badge shows the most specific one, but filtering by any of the
+  co-occurring types still finds it, matching how Protect's own UI counts
+  the same event under multiple categories.
+- Optional historical backfill (needs a local UniFi OS admin account, see
+  [DEPLOY.md](DEPLOY.md)) fills in real event types for clips from before
+  the listener started, or during any downtime, using Protect's own
+  session-authenticated events API — the Integration API has no historical
+  event-search endpoint, so this is the only way. This same API is also the
+  only source for a license plate reading or a recognized "Known Face"
+  name, shown alongside the badge when available.
 - Transcodes clips on demand (UniFi exports 4K HEVC, which Chrome/Firefox
   won't play natively) — uses Intel QuickSync (VAAPI) hardware
   transcoding if `/dev/dri` is available, with a disk cache so repeat
   views are instant.
-- Single shared login (session cookie) gates the whole app — this is a
-  home-NVR viewer, not a multi-tenant product.
+- Login (session cookie) gates the whole app — one username/password per
+  person, everyone with equal full access; no roles or per-user permissions.
 - One Go binary (frontend embedded via `embed.FS`), SQLite for storage —
   no separate database or Node build step to run.
 
@@ -42,7 +50,7 @@ instead, similar to Protect's own UI.
 ```bash
 cp app.env.example app.env
 # edit app.env
-go run ./cmd/hashpw '<your chosen password>'   # -> AUTH_PASSWORD_HASH
+go run ./cmd/hashpw '<your chosen password>'   # -> an entry in AUTH_USERS
 openssl rand -hex 32                            # -> SESSION_SECRET
 
 docker compose up --build -d
@@ -63,12 +71,15 @@ running outside the container.
 
 ## Known limitations
 
-- No historical backfill of real Protect event types — see above.
 - No retention/deletion management of the original clips; read-only.
-- Single shared login, no multi-user/roles.
+- No per-user permissions — every logged-in user sees everything.
 - Filename parsing assumes the format UniFi Protect's SMB export currently
   uses; if Ubiquiti changes it, `internal/filenameparse` is the place to
   fix it.
+- Backfill and the license plate/face-name detail both depend on an
+  undocumented, session-authenticated Protect API — it works today but
+  isn't an officially supported integration surface, so it could change
+  without notice.
 
 ## License
 

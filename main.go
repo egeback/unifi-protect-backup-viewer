@@ -60,7 +60,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	authMgr := auth.New(cfg.AuthUser, cfg.AuthPasswordHash, cfg.SessionSecret)
+	authMgr := auth.New(cfg.AuthUsers, cfg.SessionSecret)
 
 	server := api.NewServer(database, streamer, thumbs, authMgr, log)
 	httpServer := &http.Server{

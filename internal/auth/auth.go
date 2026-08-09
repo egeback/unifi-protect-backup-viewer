@@ -1,12 +1,12 @@
-// Package auth gates the app behind a single shared login, using a
-// bcrypt-hashed password and HMAC-signed session cookies. No user database,
-// no roles — this is a home NVR viewer, not a multi-tenant app.
+// Package auth gates the app behind login, using bcrypt-hashed passwords
+// and HMAC-signed session cookies. Every configured user has equal, full
+// access — no roles, no per-user permissions, no user database to manage
+// at runtime — this is a household NVR viewer, not a multi-tenant app.
 package auth
 
 import (
 	"crypto/hmac"
 	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,13 +24,12 @@ const (
 )
 
 type Manager struct {
-	user         string
-	passwordHash []byte
-	secret       []byte
+	users  map[string]string // username -> bcrypt hash
+	secret []byte
 }
 
-func New(user, passwordHash, secret string) *Manager {
-	return &Manager{user: user, passwordHash: []byte(passwordHash), secret: []byte(secret)}
+func New(users map[string]string, secret string) *Manager {
+	return &Manager{users: users, secret: []byte(secret)}
 }
 
 // LoginHandler checks the submitted credentials and, on success, sets a
@@ -45,9 +44,9 @@ func (m *Manager) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userOK := subtle.ConstantTimeCompare([]byte(creds.Username), []byte(m.user)) == 1
-	passOK := bcrypt.CompareHashAndPassword(m.passwordHash, []byte(creds.Password)) == nil
-	if !userOK || !passOK {
+	hash, known := m.users[creds.Username]
+	passOK := known && bcrypt.CompareHashAndPassword([]byte(hash), []byte(creds.Password)) == nil
+	if !passOK {
 		http.Error(w, `{"error":"invalid credentials"}`, http.StatusUnauthorized)
 		return
 	}
@@ -102,8 +101,15 @@ func (m *Manager) sign(username string, expires time.Time) string {
 }
 
 func (m *Manager) valid(cookieValue string) bool {
-	_, err := m.verify(cookieValue)
-	return err == nil
+	username, err := m.verify(cookieValue)
+	if err != nil {
+		return false
+	}
+	// Re-check against the current user list, not just the signature: a
+	// user removed from AUTH_USERS should lose access on their next
+	// request, not just stop being able to start new sessions.
+	_, known := m.users[username]
+	return known
 }
 
 func (m *Manager) verify(cookieValue string) (username string, err error) {

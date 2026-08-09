@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,10 +34,10 @@ type Config struct {
 	ProtectUser     string
 	ProtectPassword string
 
-	// AuthUser is the single shared login username.
-	AuthUser string
-	// AuthPasswordHash is a bcrypt hash of the login password.
-	AuthPasswordHash string
+	// AuthUsers maps username -> bcrypt password hash. Every user has equal,
+	// full access — this is a household viewer, not a multi-tenant app with
+	// per-user permissions. Parsed from AUTH_USERS ("user:hash;user2:hash2").
+	AuthUsers map[string]string
 	// SessionSecret signs session cookies (HMAC key).
 	SessionSecret string
 
@@ -56,19 +57,20 @@ func Load() (Config, error) {
 		ProtectInsecureSkipVerify: getEnvBool("PROTECT_INSECURE_SKIP_VERIFY", true),
 		ProtectUser:               os.Getenv("PROTECT_USER"),
 		ProtectPassword:           os.Getenv("PROTECT_PASSWORD"),
-		AuthUser:                  os.Getenv("AUTH_USER"),
-		AuthPasswordHash:          os.Getenv("AUTH_PASSWORD_HASH"),
 		SessionSecret:             os.Getenv("SESSION_SECRET"),
 		IndexInterval:             getEnvDuration("INDEX_INTERVAL", 5*time.Minute),
 		TranscodeCacheTTL:         getEnvDuration("TRANSCODE_CACHE_TTL", 14*24*time.Hour),
 	}
 
-	var missing []string
-	if c.AuthUser == "" {
-		missing = append(missing, "AUTH_USER")
+	var err error
+	c.AuthUsers, err = parseAuthUsers(os.Getenv("AUTH_USERS"))
+	if err != nil {
+		return Config{}, err
 	}
-	if c.AuthPasswordHash == "" {
-		missing = append(missing, "AUTH_PASSWORD_HASH")
+
+	var missing []string
+	if len(c.AuthUsers) == 0 {
+		missing = append(missing, "AUTH_USERS")
 	}
 	if c.SessionSecret == "" {
 		missing = append(missing, "SESSION_SECRET")
@@ -78,6 +80,27 @@ func Load() (Config, error) {
 	}
 
 	return c, nil
+}
+
+// parseAuthUsers parses "user1:bcryptHash1;user2:bcryptHash2". A bcrypt hash
+// itself never contains ';', so this simple split is safe.
+func parseAuthUsers(raw string) (map[string]string, error) {
+	users := make(map[string]string)
+	if raw == "" {
+		return users, nil
+	}
+	for _, entry := range strings.Split(raw, ";") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		username, hash, ok := strings.Cut(entry, ":")
+		if !ok || username == "" || hash == "" {
+			return nil, fmt.Errorf("AUTH_USERS entry %q is not in \"user:hash\" form", entry)
+		}
+		users[username] = hash
+	}
+	return users, nil
 }
 
 func getEnv(key, fallback string) string {

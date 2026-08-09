@@ -18,7 +18,7 @@ type Config struct {
 	// DataPath holds the SQLite database, thumbnail cache and transcode cache.
 	DataPath string
 
-	// ProtectHost is the UniFi OS console hosting Protect, e.g. "10.0.6.2".
+	// ProtectHost is the UniFi OS console hosting Protect, e.g. "192.168.1.1".
 	ProtectHost string
 	// ProtectAPIKey authenticates against the Protect Integration API.
 	ProtectAPIKey string

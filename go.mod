@@ -1,4 +1,4 @@
-module gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer
+module github.com/egeback/unifi-protect-backup-viewer
 
 go 1.25.5
 

@@ -1,11 +1,12 @@
 // Package filenameparse extracts camera name, start and end timestamps from
 // the filenames UniFi Protect's NAS export produces, e.g.:
 //
-//	"Baksidan - Frrdet 8-8-2026, 2.04.06pm GMT+2 - 8-8-2026, 2.04.27pm GMT+2.mp4"
+//	"Garden - Shed 8-8-2026, 2.04.06pm GMT+2 - 8-8-2026, 2.04.27pm GMT+2.mp4"
 //
 // The part before the first date is the camera's display name as written by
-// the SMB export, which strips any non-ASCII character (å/ä/ö) entirely
-// rather than transliterating it — that's why "Förrådet" becomes "Frrdet".
+// the SMB export, which strips any non-ASCII character entirely rather than
+// transliterating it — e.g. a camera named "Trädgården" (Swedish for "the
+// garden") shows up in filenames as "Trdgrden".
 package filenameparse
 
 import (
@@ -83,8 +84,7 @@ func parseTimestamp(g []string) (time.Time, error) {
 // NormalizeCameraName strips every non-ASCII-letter/digit rune and
 // lowercases the rest, so names can be compared across the mangled
 // filename form and the real name reported by the Protect API — e.g.
-// "Baksidan - Förrådet" and "Baksidan - Frrdet" both normalize to
-// "baksidanfrrdet".
+// "Trädgården" and "Trdgrden" both normalize to "trdgrden".
 func NormalizeCameraName(name string) string {
 	var b strings.Builder
 	for _, r := range name {

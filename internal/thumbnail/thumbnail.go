@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/db"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/db"
 )
 
 const genTimeout = 30 * time.Second

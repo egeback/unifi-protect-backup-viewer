@@ -13,9 +13,9 @@ import (
 	"sync"
 	"time"
 
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/db"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/filenameparse"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/protect"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/db"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/filenameparse"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/protect"
 )
 
 const (

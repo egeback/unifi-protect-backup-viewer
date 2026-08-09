@@ -11,16 +11,16 @@ import (
 	"syscall"
 	"time"
 
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/api"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/auth"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/config"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/correlate"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/db"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/indexer"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/protect"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/stream"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/thumbnail"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/web"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/api"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/auth"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/config"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/correlate"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/db"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/indexer"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/protect"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/stream"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/thumbnail"
+	"github.com/egeback/unifi-protect-backup-viewer/web"
 )
 
 func main() {

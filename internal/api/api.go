@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"time"
 
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/auth"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/db"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/stream"
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/thumbnail"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/auth"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/db"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/stream"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/thumbnail"
 )
 
 type Server struct {

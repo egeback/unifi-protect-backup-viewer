@@ -1,22 +1,18 @@
 #!/usr/bin/env bash
-# Deploy unifi-protect-backup-viewer to Marvin.
+# Maintainer's personal deploy helper: builds the image directly on a
+# remote Docker host over SSH and runs it via this repo's compose.yaml.
 #
-# Registry push to Gitea is unreliable right now (KAN-443, the same issue
-# documented for soc/smart-charging) — so like those two, this builds the
-# image directly on the target host instead of push/pull through the
-# registry. Marvin is x86_64 so there's no cross-arch concern.
-#
-# This talks to Marvin's plain docker daemon directly over SSH — it does
-# NOT touch the docker-infrastructure repo or wait on Hawster. Use it for
-# fast :dev iteration. Once you're happy, commit+push
-# docker-infrastructure/marvin/unifi-protect-backup-viewer/compose.yaml
-# separately so Hawster takes over long-term (same container_name, so it
-# just adopts/recreates the container Hawster's next sync run).
+# Most self-hosters won't need this at all — `docker compose up --build`
+# on the target machine directly is simpler if you can just run Docker
+# Compose there. This script exists for the case of deploying to a NAS/host
+# where you'd rather build+push from your workstation than work on the box
+# itself directly, and where a container registry isn't in the loop (e.g.
+# your registry push is broken, or you just don't want one in the loop).
 set -euo pipefail
 
-HOST="root@10.0.1.12"
-REMOTE_DIR="/mnt/flash/container_data/unifi-protect-backup-viewer/app"
-IMAGE="gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer:dev"
+HOST="${DEPLOY_HOST:?set DEPLOY_HOST, e.g. user@your-nas.example}"
+REMOTE_DIR="${DEPLOY_REMOTE_DIR:?set DEPLOY_REMOTE_DIR, e.g. /opt/unifi-protect-backup-viewer}"
+IMAGE="${DEPLOY_IMAGE:-unifi-protect-backup-viewer:local}"
 
 VERIFY_SYMBOL=""
 while [[ $# -gt 0 ]]; do
@@ -45,9 +41,7 @@ rsync -az --delete \
 echo "==> docker build on ${HOST}"
 ssh "$HOST" "cd ${REMOTE_DIR} && docker build -t ${IMAGE} ."
 
-if [[ ! -f "$(dirname "$0")/../.env.deployed.marker" ]]; then
-	echo "==> NOTE: expecting ${REMOTE_DIR}/.env to already exist on Marvin (created manually, never in git)."
-fi
+echo "==> NOTE: expecting ${REMOTE_DIR}/.env to already exist on the host (created manually, never in git)."
 
 echo "==> docker compose up -d --force-recreate --pull never"
 ssh "$HOST" "cd ${REMOTE_DIR} && docker compose up -d --force-recreate --pull never"

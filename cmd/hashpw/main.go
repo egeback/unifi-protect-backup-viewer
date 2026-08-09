@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"os"
 
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/auth"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/auth"
 )
 
 func main() {

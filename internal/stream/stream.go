@@ -1,7 +1,7 @@
 // Package stream serves clip video to browsers, transcoding on demand.
 //
 // UniFi Protect exports 4K HEVC, which Chrome/Firefox can't play natively.
-// Marvin's Intel N305 iGPU supports VAAPI (QuickSync) hardware transcode,
+// An Intel iGPU with VAAPI (QuickSync) support can hardware-transcode it,
 // so the first request for a clip is decoded+encoded through /dev/dri and
 // streamed straight to the response as fragmented MP4 (playable
 // progressively, no seeking yet) while simultaneously being written to a
@@ -22,7 +22,7 @@ import (
 	"sync"
 	"time"
 
-	"gitea.internal.egeback.com/egeback/unifi-protect-backup-viewer/internal/db"
+	"github.com/egeback/unifi-protect-backup-viewer/internal/db"
 )
 
 const (

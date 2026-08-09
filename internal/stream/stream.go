@@ -1,19 +1,16 @@
 // Package stream serves clip video to browsers, transcoding on demand.
 //
 // UniFi Protect exports 4K HEVC, which Chrome/Firefox can't play natively.
-// An Intel iGPU with VAAPI (QuickSync) support can hardware-transcode it,
-// so the first request for a clip is decoded+encoded through /dev/dri and
-// streamed straight to the response as fragmented MP4 (playable
-// progressively, no seeking yet) while simultaneously being written to a
-// disk cache. Every request after that is served straight from the cache
-// file via http.ServeContent, which gives real Range/seek support.
+// An Intel iGPU with VAAPI (QuickSync) support can hardware-transcode it.
+// The first request for a clip blocks while it's fully transcoded to a
+// disk cache; every request (including that first one, once done) is then
+// served straight from the cache file via http.ServeContent, which gives
+// real Range/seek support.
 package stream
 
 import (
-	"bytes"
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -79,7 +76,7 @@ func ServeOriginal(w http.ResponseWriter, r *http.Request, clip db.Clip) {
 }
 
 // ServeProxy serves a browser-compatible H.264 version of the clip, from
-// cache if available, otherwise transcoding on the fly.
+// cache if available, otherwise transcoding it first.
 func (s *Streamer) ServeProxy(w http.ResponseWriter, r *http.Request, clip db.Clip) {
 	cachePath := s.cachePath(clip.ID)
 	if s.serveCached(w, r, cachePath) {
@@ -95,9 +92,20 @@ func (s *Streamer) ServeProxy(w http.ResponseWriter, r *http.Request, clip db.Cl
 		return
 	}
 
-	if err := s.transcodeAndServe(r.Context(), w, clip, cachePath); err != nil {
+	// Transcode on a background context, not the request's: browsers
+	// routinely abort and re-issue <video> requests while probing
+	// seekability, and tying the transcode to that request's context meant
+	// every such retry killed the in-progress ffmpeg process outright
+	// (observed as repeated "signal: killed" — playback could never
+	// complete). Concurrent requests for the same clip just block on the
+	// lock above until this finishes.
+	if err := s.transcode(context.Background(), clip, cachePath); err != nil {
 		s.log.Error("transcode failed", "clip_id", clip.ID, "path", clip.Path, "error", err)
+		http.Error(w, "transcode failed", http.StatusInternalServerError)
+		return
 	}
+
+	s.serveCached(w, r, cachePath)
 }
 
 func (s *Streamer) serveCached(w http.ResponseWriter, r *http.Request, cachePath string) bool {
@@ -115,19 +123,15 @@ func (s *Streamer) serveCached(w http.ResponseWriter, r *http.Request, cachePath
 	return true
 }
 
-func (s *Streamer) transcodeAndServe(ctx context.Context, w http.ResponseWriter, clip db.Clip, cachePath string) error {
+// transcode writes a full, browser-compatible H.264 copy of clip.Path to
+// cachePath (via a temp file + atomic rename). It blocks until the whole
+// clip has been transcoded — clips are short (seconds to low minutes) and
+// hardware-accelerated, so this is a few seconds at most, and it sidesteps
+// the class of bug that comes from trying to serve a video mid-transcode
+// (see the comment in ServeProxy).
+func (s *Streamer) transcode(ctx context.Context, clip db.Clip, cachePath string) error {
 	tmp := cachePath + ".tmp"
-	tmpFile, err := os.Create(tmp)
-	if err != nil {
-		return fmt.Errorf("creating temp proxy file: %w", err)
-	}
-	success := false
-	defer func() {
-		tmpFile.Close()
-		if !success {
-			os.Remove(tmp)
-		}
-	}()
+	defer os.Remove(tmp) // no-op if the rename below already moved it away
 
 	ctx, cancel := context.WithTimeout(ctx, transcodeTimeout)
 	defer cancel()
@@ -143,37 +147,15 @@ func (s *Streamer) transcodeAndServe(ctx context.Context, w http.ResponseWriter,
 		"-b:v", "6M",
 		"-c:a", "aac",
 		"-b:a", "128k",
-		"-movflags", "frag_keyframe+empty_moov+default_base_moof",
-		"-f", "mp4",
-		"pipe:1",
+		"-movflags", "+faststart",
+		"-f", "mp4", // tmp's extension (.tmp) won't let ffmpeg infer this
+		tmp,
 	)
-	stdout, err := cmd.StdoutPipe()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("attaching ffmpeg stdout: %w", err)
-	}
-	var stderrBuf bytes.Buffer
-	cmd.Stderr = &stderrBuf
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting ffmpeg: %w", err)
+		return fmt.Errorf("ffmpeg exited with error: %w: %s", err, truncate(output, 800))
 	}
 
-	w.Header().Set("Content-Type", "video/mp4")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-
-	_, copyErr := io.Copy(io.MultiWriter(w, tmpFile), stdout)
-	waitErr := cmd.Wait()
-
-	if waitErr != nil {
-		return fmt.Errorf("ffmpeg exited with error: %w: %s", waitErr, truncate(stderrBuf.Bytes(), 800))
-	}
-	if copyErr != nil {
-		return fmt.Errorf("streaming ffmpeg output to client: %w", copyErr)
-	}
-
-	success = true
-	tmpFile.Close()
 	if err := os.Rename(tmp, cachePath); err != nil {
 		return fmt.Errorf("promoting proxy cache file: %w", err)
 	}

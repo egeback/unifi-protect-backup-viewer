@@ -105,20 +105,21 @@ func (s *Server) handleCameras(w http.ResponseWriter, r *http.Request) {
 }
 
 type clipJSON struct {
-	ID           int64  `json:"id"`
-	Day          string `json:"day"`
-	Camera       string `json:"camera"`
-	CameraKey    string `json:"camera_key"`
-	Start        string `json:"start"`
-	End          string `json:"end"`
-	DurationS    int64  `json:"duration_s"`
-	SizeBytes    int64  `json:"size_bytes"`
-	EventType    string `json:"event_type"`
-	EventSource  string `json:"event_source"`
-	EventDetail  string `json:"event_detail"`
-	ThumbnailURL string `json:"thumbnail_url"`
-	StreamURL    string `json:"stream_url"`
-	DownloadURL  string `json:"download_url"`
+	ID           int64    `json:"id"`
+	Day          string   `json:"day"`
+	Camera       string   `json:"camera"`
+	CameraKey    string   `json:"camera_key"`
+	Start        string   `json:"start"`
+	End          string   `json:"end"`
+	DurationS    int64    `json:"duration_s"`
+	SizeBytes    int64    `json:"size_bytes"`
+	EventType    string   `json:"event_type"`
+	EventSource  string   `json:"event_source"`
+	EventDetail  string   `json:"event_detail"`
+	EventTypes   []string `json:"event_types"`
+	ThumbnailURL string   `json:"thumbnail_url"`
+	StreamURL    string   `json:"stream_url"`
+	DownloadURL  string   `json:"download_url"`
 }
 
 func toClipJSON(c db.Clip) clipJSON {
@@ -135,6 +136,7 @@ func toClipJSON(c db.Clip) clipJSON {
 		EventType:    c.EventType,
 		EventSource:  c.EventSource,
 		EventDetail:  c.EventDetail,
+		EventTypes:   c.EventTypes,
 		ThumbnailURL: "/api/clips/" + id + "/thumbnail",
 		StreamURL:    "/api/clips/" + id + "/stream",
 		DownloadURL:  "/api/clips/" + id + "/download",

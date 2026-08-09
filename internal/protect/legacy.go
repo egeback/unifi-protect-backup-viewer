@@ -91,7 +91,8 @@ func (c *LegacyClient) ensureLoggedIn(ctx context.Context) error {
 // ones (empty SmartDetectTypes) are filtered out.
 type LegacyEvent struct {
 	ID          string
-	PrimaryType string // best single classification, via PickPrimaryType
+	PrimaryType string   // best single classification, via PickPrimaryType — for the badge
+	Types       []string // every type detected simultaneously — for filtering
 	// Detail is a license plate reading or a recognized face's name, when
 	// Protect's own object/face recognition matched one confidently enough
 	// — empty otherwise (e.g. no "Known Faces" configured, or no match).
@@ -201,6 +202,7 @@ func (c *LegacyClient) Events(ctx context.Context, start, end time.Time) ([]Lega
 		events = append(events, LegacyEvent{
 			ID:          r.ID,
 			PrimaryType: primary,
+			Types:       r.SmartDetectTypes,
 			Detail:      pickDetail(primary, r.Metadata.DetectedThumbnails),
 			Camera:      *r.Camera,
 			Start:       r.Start,

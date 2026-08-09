@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -92,7 +93,7 @@ func (c *Correlator) OnEvent(ev protect.SmartDetectEvent) {
 		return
 	}
 
-	if err := c.db.InsertEvent(ev.ID, ev.CameraID, cameraKey, ev.Type, ev.Detail, ev.Start, ev.End, ev.RawJSON); err != nil {
+	if err := c.db.InsertEvent(ev.ID, ev.CameraID, cameraKey, ev.Type, ev.Detail, ev.Types, ev.Start, ev.End, ev.RawJSON); err != nil {
 		c.log.Error("storing protect event failed", "error", err)
 		return
 	}
@@ -140,7 +141,7 @@ func (c *Correlator) Backfill(ctx context.Context, legacy *protect.LegacyClient)
 			end = &t
 		}
 		raw, _ := json.Marshal(ev)
-		if err := c.db.InsertEvent(ev.ID, ev.Camera, cameraKey, ev.PrimaryType, ev.Detail, start, end, string(raw)); err != nil {
+		if err := c.db.InsertEvent(ev.ID, ev.Camera, cameraKey, ev.PrimaryType, ev.Detail, ev.Types, start, end, string(raw)); err != nil {
 			c.log.Error("storing backfilled event failed", "error", err)
 			continue
 		}
@@ -170,7 +171,7 @@ func (c *Correlator) reclassifyAllClips() (int, error) {
 
 	var changed int
 	for _, clip := range clips {
-		eventType, detail, found, err := c.db.FindOverlappingEvent(clip.CameraKey, clip.Start, clip.End, overlapTolerance)
+		eventType, detail, types, found, err := c.db.FindOverlappingEvent(clip.CameraKey, clip.Start, clip.End, overlapTolerance)
 		if err != nil {
 			c.log.Error("finding overlapping event failed", "clip_id", clip.ID, "error", err)
 			continue
@@ -178,10 +179,10 @@ func (c *Correlator) reclassifyAllClips() (int, error) {
 		if !found {
 			continue
 		}
-		if clip.EventSource == "protect" && clip.EventType == eventType && clip.EventDetail == detail {
+		if clip.EventSource == "protect" && clip.EventType == eventType && clip.EventDetail == detail && slices.Equal(clip.EventTypes, types) {
 			continue // already correct
 		}
-		if err := c.db.SetClipClassification(clip.ID, eventType, "protect", detail); err != nil {
+		if err := c.db.SetClipClassification(clip.ID, eventType, "protect", detail, types); err != nil {
 			c.log.Error("updating classification failed", "clip_id", clip.ID, "error", err)
 			continue
 		}
@@ -215,13 +216,13 @@ func classifyOnce(database *db.DB, log *slog.Logger) {
 
 	var matched, heuristic, deferred int
 	for _, clip := range clips {
-		eventType, detail, found, err := database.FindOverlappingEvent(clip.CameraKey, clip.Start, clip.End, overlapTolerance)
+		eventType, detail, types, found, err := database.FindOverlappingEvent(clip.CameraKey, clip.Start, clip.End, overlapTolerance)
 		if err != nil {
 			log.Error("finding overlapping event failed", "clip_id", clip.ID, "error", err)
 			continue
 		}
 		if found {
-			if err := database.SetClipClassification(clip.ID, eventType, "protect", detail); err != nil {
+			if err := database.SetClipClassification(clip.ID, eventType, "protect", detail, types); err != nil {
 				log.Error("setting classification failed", "clip_id", clip.ID, "error", err)
 				continue
 			}
@@ -235,7 +236,7 @@ func classifyOnce(database *db.DB, log *slog.Logger) {
 		}
 
 		guess := heuristicType(time.Duration(clip.DurationS) * time.Second)
-		if err := database.SetClipClassification(clip.ID, guess, "heuristic", ""); err != nil {
+		if err := database.SetClipClassification(clip.ID, guess, "heuristic", "", []string{guess}); err != nil {
 			log.Error("setting heuristic classification failed", "clip_id", clip.ID, "error", err)
 			continue
 		}

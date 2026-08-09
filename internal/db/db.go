@@ -3,6 +3,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -21,9 +22,14 @@ CREATE TABLE IF NOT EXISTS clips (
 	duration_s      INTEGER NOT NULL,
 	size_bytes      INTEGER NOT NULL,
 	mtime           INTEGER NOT NULL,
-	event_type      TEXT NOT NULL DEFAULT 'unknown',
+	event_type      TEXT NOT NULL DEFAULT 'unknown', -- single "headline" type, for the badge
 	event_source    TEXT NOT NULL DEFAULT 'unknown', -- protect | heuristic | unknown
 	event_detail    TEXT NOT NULL DEFAULT '', -- license plate text or matched face name, if any
+	event_types     TEXT NOT NULL DEFAULT '[]', -- JSON array of ALL detected types, for filtering —
+	                                             -- Protect's own event categorization is multi-label
+	                                             -- (one detection can be face+person+vehicle at once),
+	                                             -- so filtering must check membership here, not just
+	                                             -- match the single event_type badge.
 	thumbnail_ready INTEGER NOT NULL DEFAULT 0,
 	indexed_at      INTEGER NOT NULL
 );
@@ -40,8 +46,9 @@ CREATE TABLE IF NOT EXISTS events (
 	                                   -- or backfill re-derives a type after a logic fix.
 	camera_id    TEXT NOT NULL,
 	camera_key   TEXT NOT NULL, -- normalized camera name, for correlation
-	type         TEXT NOT NULL,
+	type         TEXT NOT NULL, -- single "headline" type
 	detail       TEXT NOT NULL DEFAULT '', -- license plate text or matched face name, if any
+	types        TEXT NOT NULL DEFAULT '[]', -- JSON array of ALL detected types
 	start_ts     INTEGER NOT NULL,
 	end_ts       INTEGER,
 	raw_json     TEXT NOT NULL,
@@ -86,6 +93,7 @@ type Clip struct {
 	EventType      string
 	EventSource    string
 	EventDetail    string
+	EventTypes     []string // every type detected, for filtering (event_type is just the headline one)
 	ThumbnailReady bool
 	IndexedAt      time.Time
 }
@@ -156,9 +164,16 @@ func (d *DB) EarliestNonProtectClipStart() (t time.Time, ok bool, err error) {
 	return time.Unix(*startTs, 0), true, nil
 }
 
-// SetClipClassification updates a clip's event_type/event_source/event_detail after correlation.
-func (d *DB) SetClipClassification(id int64, eventType, eventSource, detail string) error {
-	_, err := d.Exec(`UPDATE clips SET event_type = ?, event_source = ?, event_detail = ? WHERE id = ?`, eventType, eventSource, detail, id)
+// SetClipClassification updates a clip's classification after correlation.
+// types is every type the matched event detected (for filtering); eventType
+// is just the single "headline" one (for the badge) — see PickPrimaryType.
+func (d *DB) SetClipClassification(id int64, eventType, eventSource, detail string, types []string) error {
+	typesJSON, err := json.Marshal(types)
+	if err != nil {
+		return fmt.Errorf("encoding event types for clip %d: %w", id, err)
+	}
+	_, err = d.Exec(`UPDATE clips SET event_type = ?, event_source = ?, event_detail = ?, event_types = ? WHERE id = ?`,
+		eventType, eventSource, detail, string(typesJSON), id)
 	if err != nil {
 		return fmt.Errorf("updating classification for clip %d: %w", id, err)
 	}
@@ -201,8 +216,9 @@ func (d *DB) ClipByID(id int64) (Clip, error) {
 	var c Clip
 	var startTs, endTs, mtime, indexedAt int64
 	var thumbReady int
-	err := d.QueryRow(`SELECT id, path, day, camera_name, camera_key, start_ts, end_ts, duration_s, size_bytes, mtime, event_type, event_source, event_detail, thumbnail_ready, indexed_at FROM clips WHERE id = ?`, id).
-		Scan(&c.ID, &c.Path, &c.Day, &c.CameraName, &c.CameraKey, &startTs, &endTs, &c.DurationS, &c.SizeBytes, &mtime, &c.EventType, &c.EventSource, &c.EventDetail, &thumbReady, &indexedAt)
+	var typesJSON string
+	err := d.QueryRow(`SELECT id, path, day, camera_name, camera_key, start_ts, end_ts, duration_s, size_bytes, mtime, event_type, event_source, event_detail, event_types, thumbnail_ready, indexed_at FROM clips WHERE id = ?`, id).
+		Scan(&c.ID, &c.Path, &c.Day, &c.CameraName, &c.CameraKey, &startTs, &endTs, &c.DurationS, &c.SizeBytes, &mtime, &c.EventType, &c.EventSource, &c.EventDetail, &typesJSON, &thumbReady, &indexedAt)
 	if err != nil {
 		return Clip{}, fmt.Errorf("fetching clip %d: %w", id, err)
 	}
@@ -211,6 +227,7 @@ func (d *DB) ClipByID(id int64) (Clip, error) {
 	c.MTime = time.Unix(mtime, 0)
 	c.IndexedAt = time.Unix(indexedAt, 0)
 	c.ThumbnailReady = thumbReady == 1
+	_ = json.Unmarshal([]byte(typesJSON), &c.EventTypes)
 	return c, nil
 }
 
@@ -223,9 +240,14 @@ type ClipFilter struct {
 	Offset    int
 }
 
-// ListClips returns clips matching the filter, newest first.
+// ListClips returns clips matching the filter, newest first. EventType
+// matches if it's ANY of the clip's detected types, not just the headline
+// one — Protect's own event categorization is multi-label (a single
+// detection can be face+person+vehicle at once), so e.g. filtering by
+// "vehicle" must still surface a clip whose badge shows "face" because
+// that happened to be the more specific simultaneous detection.
 func (d *DB) ListClips(f ClipFilter) ([]Clip, error) {
-	query := `SELECT id, path, day, camera_name, camera_key, start_ts, end_ts, duration_s, size_bytes, event_type, event_source, event_detail, thumbnail_ready FROM clips WHERE 1=1`
+	query := `SELECT id, path, day, camera_name, camera_key, start_ts, end_ts, duration_s, size_bytes, event_type, event_source, event_detail, event_types, thumbnail_ready FROM clips WHERE 1=1`
 	var args []any
 	if f.Day != "" {
 		query += ` AND day = ?`
@@ -236,7 +258,7 @@ func (d *DB) ListClips(f ClipFilter) ([]Clip, error) {
 		args = append(args, f.CameraKey)
 	}
 	if f.EventType != "" {
-		query += ` AND event_type = ?`
+		query += ` AND EXISTS (SELECT 1 FROM json_each(event_types) WHERE json_each.value = ?)`
 		args = append(args, f.EventType)
 	}
 	query += ` ORDER BY start_ts DESC`
@@ -256,12 +278,14 @@ func (d *DB) ListClips(f ClipFilter) ([]Clip, error) {
 		var c Clip
 		var startTs, endTs int64
 		var thumbReady int
-		if err := rows.Scan(&c.ID, &c.Path, &c.Day, &c.CameraName, &c.CameraKey, &startTs, &endTs, &c.DurationS, &c.SizeBytes, &c.EventType, &c.EventSource, &c.EventDetail, &thumbReady); err != nil {
+		var typesJSON string
+		if err := rows.Scan(&c.ID, &c.Path, &c.Day, &c.CameraName, &c.CameraKey, &startTs, &endTs, &c.DurationS, &c.SizeBytes, &c.EventType, &c.EventSource, &c.EventDetail, &typesJSON, &thumbReady); err != nil {
 			return nil, fmt.Errorf("scanning clip row: %w", err)
 		}
 		c.Start = time.Unix(startTs, 0)
 		c.End = time.Unix(endTs, 0)
 		c.ThumbnailReady = thumbReady == 1
+		_ = json.Unmarshal([]byte(typesJSON), &c.EventTypes)
 		clips = append(clips, c)
 	}
 	return clips, rows.Err()
@@ -317,49 +341,55 @@ type Camera struct {
 // by backfill after a classification-logic fix, ends up as one row with
 // the latest known type/detail — not an ever-growing pile of conflicting
 // duplicates for the same real-world event.
-func (d *DB) InsertEvent(sourceID, cameraID, cameraKey, eventType, detail string, start time.Time, end *time.Time, rawJSON string) error {
+func (d *DB) InsertEvent(sourceID, cameraID, cameraKey, eventType, detail string, types []string, start time.Time, end *time.Time, rawJSON string) error {
 	var endTs any
 	if end != nil {
 		endTs = end.Unix()
 	}
-	_, err := d.Exec(`
-		INSERT INTO events (source_id, camera_id, camera_key, type, detail, start_ts, end_ts, raw_json, received_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	typesJSON, err := json.Marshal(types)
+	if err != nil {
+		return fmt.Errorf("encoding event types for %s: %w", sourceID, err)
+	}
+	_, err = d.Exec(`
+		INSERT INTO events (source_id, camera_id, camera_key, type, detail, types, start_ts, end_ts, raw_json, received_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(source_id) DO UPDATE SET
 			type = excluded.type,
 			detail = excluded.detail,
+			types = excluded.types,
 			end_ts = excluded.end_ts,
 			raw_json = excluded.raw_json,
 			received_at = excluded.received_at
-	`, sourceID, cameraID, cameraKey, eventType, detail, start.Unix(), endTs, rawJSON, time.Now().Unix())
+	`, sourceID, cameraID, cameraKey, eventType, detail, string(typesJSON), start.Unix(), endTs, rawJSON, time.Now().Unix())
 	if err != nil {
 		return fmt.Errorf("upserting event %s: %w", sourceID, err)
 	}
 	return nil
 }
 
-// FindOverlappingEvent returns the smart-detect event type/detail for a
-// camera whose time window overlaps [start,end] (with a small tolerance), if any.
-func (d *DB) FindOverlappingEvent(cameraKey string, start, end time.Time, tolerance time.Duration) (eventType, detail string, found bool, err error) {
+// FindOverlappingEvent returns the smart-detect event type/detail/types for
+// a camera whose time window overlaps [start,end] (with a small tolerance), if any.
+func (d *DB) FindOverlappingEvent(cameraKey string, start, end time.Time, tolerance time.Duration) (eventType, detail string, types []string, found bool, err error) {
 	lo := start.Add(-tolerance).Unix()
 	hi := end.Add(tolerance).Unix()
 	row := d.QueryRow(`
-		SELECT type, detail FROM events
+		SELECT type, detail, types FROM events
 		WHERE camera_key = ?
 		  AND start_ts <= ?
 		  AND (end_ts IS NULL OR end_ts >= ?)
 		ORDER BY start_ts DESC
 		LIMIT 1
 	`, cameraKey, hi, lo)
-	var t, det string
-	err = row.Scan(&t, &det)
+	var t, det, typesJSON string
+	err = row.Scan(&t, &det, &typesJSON)
 	if err == sql.ErrNoRows {
-		return "", "", false, nil
+		return "", "", nil, false, nil
 	}
 	if err != nil {
-		return "", "", false, fmt.Errorf("finding overlapping event: %w", err)
+		return "", "", nil, false, fmt.Errorf("finding overlapping event: %w", err)
 	}
-	return t, det, true, nil
+	_ = json.Unmarshal([]byte(typesJSON), &types)
+	return t, det, types, true, nil
 }
 
 // PruneOldEvents deletes events older than the given cutoff, keeping the table small.

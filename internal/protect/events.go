@@ -15,7 +15,8 @@ import (
 type SmartDetectEvent struct {
 	ID       string // Protect's own event id, used to dedupe/upsert
 	CameraID string
-	Type     string
+	Type     string   // single "headline" type, via PickPrimaryType — for the badge
+	Types    []string // every type detected simultaneously — for filtering
 	// Detail (license plate text, matched face name) is always empty here:
 	// the live websocket payload doesn't include the metadata it lives in,
 	// unlike the legacy history API (see legacy.go). Only backfill fills it in.
@@ -132,8 +133,11 @@ func extractEvent(msg []byte) (SmartDetectEvent, bool) {
 	}
 
 	eventType := item.Type
-	if len(item.SmartDetectTypes) > 0 {
-		eventType = PickPrimaryType(item.SmartDetectTypes)
+	types := item.SmartDetectTypes
+	if len(types) > 0 {
+		eventType = PickPrimaryType(types)
+	} else if eventType != "" {
+		types = []string{eventType}
 	}
 	if eventType == "" {
 		return SmartDetectEvent{}, false
@@ -143,6 +147,7 @@ func extractEvent(msg []byte) (SmartDetectEvent, bool) {
 		ID:       item.ID,
 		CameraID: item.Device,
 		Type:     eventType,
+		Types:    types,
 		Start:    time.UnixMilli(item.Start),
 		RawJSON:  string(msg),
 	}

@@ -149,9 +149,12 @@ func (d *DB) MarkThumbnailReady(id int64) error {
 	return err
 }
 
-// ClipsWithoutThumbnail returns clip IDs and paths still missing a thumbnail.
+// ClipsWithoutThumbnail returns clip IDs and paths still missing a
+// thumbnail, newest first — newest is what the UI shows by default, and on
+// a large backlog (e.g. after a fresh reindex) there's no reason to make
+// today's clips wait behind months-old ones.
 func (d *DB) ClipsWithoutThumbnail(limit int) ([]Clip, error) {
-	rows, err := d.Query(`SELECT id, path, start_ts, end_ts FROM clips WHERE thumbnail_ready = 0 LIMIT ?`, limit)
+	rows, err := d.Query(`SELECT id, path, start_ts, end_ts FROM clips WHERE thumbnail_ready = 0 ORDER BY start_ts DESC LIMIT ?`, limit)
 	if err != nil {
 		return nil, fmt.Errorf("querying clips without thumbnail: %w", err)
 	}

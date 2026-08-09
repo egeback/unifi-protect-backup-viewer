@@ -112,7 +112,12 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
+// runPeriodically calls fn immediately, then again every interval, until
+// ctx is cancelled. The immediate call matters here: thumbnail generation
+// otherwise sat idle for a full interval after every startup/restart before
+// doing anything.
 func runPeriodically(ctx context.Context, interval time.Duration, fn func()) {
+	fn()
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {

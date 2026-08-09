@@ -86,6 +86,12 @@ func (g *Generator) generate(ctx context.Context, c db.Clip) error {
 		"-update", "1",
 		"-vf", "scale=480:-2",
 		"-q:v", "4",
+		// Explicit muxer: ffmpeg infers output format from the file
+		// extension, and the .jpg.tmp temp filename (renamed to .jpg only
+		// after a successful write, for atomicity) doesn't match anything,
+		// so it refused to write at all ("Unable to find a suitable output
+		// format") without this.
+		"-f", "mjpeg",
 		tmp,
 	)
 	output, err := cmd.CombinedOutput()

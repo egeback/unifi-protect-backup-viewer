@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logga in — NVR</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body class="login-body">
+  <form id="login-form" class="login-card">
+    <h1>NVR</h1>
+    <p class="login-sub">Logga in för att se inspelningar</p>
+    <label>
+      Användarnamn
+      <input type="text" name="username" autocomplete="username" required autofocus>
+    </label>
+    <label>
+      Lösenord
+      <input type="password" name="password" autocomplete="current-password" required>
+    </label>
+    <button type="submit">Logga in</button>
+    <p id="login-error" class="login-error" hidden>Fel användarnamn eller lösenord.</p>
+  </form>
+  <script src="/assets/login.js"></script>
+</body>
+</html>

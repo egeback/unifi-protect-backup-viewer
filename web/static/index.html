@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NVR</title>
+<link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>NVR</h1>
+    <select id="camera-select"><option value="">Alla kameror</option></select>
+    <select id="day-select"></select>
+    <div class="spacer"></div>
+    <button id="logout-btn" class="btn-ghost">Logga ut</button>
+  </header>
+
+  <nav id="type-filters" class="type-filters"></nav>
+
+  <main id="grid" class="grid"></main>
+  <p id="empty-state" class="empty-state" hidden>Inga klipp för det här filtret.</p>
+
+  <div id="player-modal" class="modal" hidden>
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <video id="player-video" controls autoplay></video>
+      <div class="modal-info">
+        <div>
+          <div id="player-camera" class="player-camera"></div>
+          <div id="player-time" class="player-time"></div>
+        </div>
+        <div class="modal-actions">
+          <a id="player-download" class="btn-ghost" download>Ladda ner original</a>
+          <button id="player-prev" class="btn-ghost">&larr; Föregående</button>
+          <button id="player-next" class="btn-ghost">Nästa &rarr;</button>
+          <button id="player-close" class="btn-ghost">Stäng</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>

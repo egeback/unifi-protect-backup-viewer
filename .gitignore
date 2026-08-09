@@ -1,0 +1,7 @@
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+/unifi-protect-backup-viewer
+/hashpw

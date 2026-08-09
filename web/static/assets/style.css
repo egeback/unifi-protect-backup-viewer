@@ -182,6 +182,9 @@ body {
 }
 
 /* ---- Player modal ---- */
+.modal[hidden] {
+  display: none;
+}
 .modal {
   position: fixed;
   inset: 0;

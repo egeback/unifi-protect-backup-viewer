@@ -25,6 +25,14 @@ type Config struct {
 	// ProtectInsecureSkipVerify allows self-signed certs on the local console.
 	ProtectInsecureSkipVerify bool
 
+	// ProtectUser/ProtectPassword are local UniFi OS console admin
+	// credentials (NOT the API key) for the legacy session-authenticated
+	// API, which is the only way to backfill historical events — the
+	// Integration API has no historical event-search endpoint. Optional:
+	// if unset, clips just never get upgraded past the heuristic guess.
+	ProtectUser     string
+	ProtectPassword string
+
 	// AuthUser is the single shared login username.
 	AuthUser string
 	// AuthPasswordHash is a bcrypt hash of the login password.
@@ -46,6 +54,8 @@ func Load() (Config, error) {
 		ProtectHost:               os.Getenv("PROTECT_HOST"),
 		ProtectAPIKey:             os.Getenv("PROTECT_API_KEY"),
 		ProtectInsecureSkipVerify: getEnvBool("PROTECT_INSECURE_SKIP_VERIFY", true),
+		ProtectUser:               os.Getenv("PROTECT_USER"),
+		ProtectPassword:           os.Getenv("PROTECT_PASSWORD"),
 		AuthUser:                  os.Getenv("AUTH_USER"),
 		AuthPasswordHash:          os.Getenv("AUTH_PASSWORD_HASH"),
 		SessionSecret:             os.Getenv("SESSION_SECRET"),

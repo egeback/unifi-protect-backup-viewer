@@ -96,6 +96,17 @@ func run(log *slog.Logger) error {
 			}
 		})
 		go protect.Listen(ctx, client, log, correlator.OnEvent)
+
+		if cfg.ProtectUser != "" && cfg.ProtectPassword != "" {
+			legacy := protect.NewLegacyClient(cfg.ProtectHost, cfg.ProtectUser, cfg.ProtectPassword)
+			go runPeriodically(ctx, 15*time.Minute, func() {
+				if err := correlator.Backfill(ctx, legacy); err != nil {
+					log.Error("backfill failed", "error", err)
+				}
+			})
+		} else {
+			log.Warn("PROTECT_USER/PROTECT_PASSWORD not set — clips missed by the live event listener will never get upgraded past the heuristic guess")
+		}
 	} else {
 		log.Warn("PROTECT_API_KEY/PROTECT_HOST not set — clips will only get heuristic event classification")
 	}

@@ -134,6 +134,46 @@ func (d *DB) UnclassifiedClips() ([]Clip, error) {
 	return clips, rows.Err()
 }
 
+// NonProtectClips returns every clip that doesn't yet have a real Protect
+// event match — both event_source = 'unknown' (not yet processed at all)
+// and 'heuristic' (already given a best-effort guess, but still eligible
+// to be upgraded if a real historical event turns up via backfill).
+func (d *DB) NonProtectClips() ([]Clip, error) {
+	rows, err := d.Query(`SELECT id, path, day, camera_name, camera_key, start_ts, end_ts, duration_s FROM clips WHERE event_source != 'protect'`)
+	if err != nil {
+		return nil, fmt.Errorf("querying non-protect clips: %w", err)
+	}
+	defer rows.Close()
+
+	var clips []Clip
+	for rows.Next() {
+		var c Clip
+		var startTs, endTs int64
+		if err := rows.Scan(&c.ID, &c.Path, &c.Day, &c.CameraName, &c.CameraKey, &startTs, &endTs, &c.DurationS); err != nil {
+			return nil, fmt.Errorf("scanning clip row: %w", err)
+		}
+		c.Start = time.Unix(startTs, 0)
+		c.End = time.Unix(endTs, 0)
+		clips = append(clips, c)
+	}
+	return clips, rows.Err()
+}
+
+// EarliestNonProtectClipStart returns the start time of the oldest clip
+// that still isn't protect-sourced, i.e. how far back a backfill needs to
+// look. ok is false if every clip already has a real Protect match.
+func (d *DB) EarliestNonProtectClipStart() (t time.Time, ok bool, err error) {
+	var startTs *int64
+	err = d.QueryRow(`SELECT MIN(start_ts) FROM clips WHERE event_source != 'protect'`).Scan(&startTs)
+	if err != nil {
+		return time.Time{}, false, fmt.Errorf("finding earliest non-protect clip: %w", err)
+	}
+	if startTs == nil {
+		return time.Time{}, false, nil
+	}
+	return time.Unix(*startTs, 0), true, nil
+}
+
 // SetClipClassification updates a clip's event_type/event_source after correlation.
 func (d *DB) SetClipClassification(id int64, eventType, eventSource string) error {
 	_, err := d.Exec(`UPDATE clips SET event_type = ?, event_source = ? WHERE id = ?`, eventType, eventSource, id)

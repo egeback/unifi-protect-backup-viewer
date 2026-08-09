@@ -1,14 +1,17 @@
 // Package correlate matches indexed clips to real UniFi Protect smart-detect
 // events when available, and falls back to a duration-based guess otherwise.
 //
-// Real event types can only be captured for clips recorded after this
-// service started listening (see internal/protect) — there is no historical
-// event-search API. Clips older than that, or recorded while the listener
-// was down, only ever get the heuristic classification.
+// Live-classified events come from the Integration API's event WebSocket
+// (see internal/protect), which only ever sees events from whenever it
+// started listening onward. Backfill (this package's Backfill method) fills
+// in everything else — clips recorded before the listener started, or
+// during any downtime — using the legacy session-authenticated events API,
+// which does support historical search (unlike the Integration API).
 package correlate
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"time"
@@ -94,6 +97,91 @@ func (c *Correlator) OnEvent(ev protect.SmartDetectEvent) {
 		return
 	}
 	c.log.Info("stored protect event", "camera_key", cameraKey, "type", ev.Type, "start", ev.Start)
+}
+
+// Backfill fetches historical events from the earliest still-not-protect-
+// classified clip's start time up to now, stores them, and re-runs
+// classification for every clip that isn't already protect-sourced —
+// including ones already given a heuristic guess, which get upgraded if a
+// real match turns up. Safe to call repeatedly (e.g. on a periodic timer):
+// with nothing left to backfill it's just one cheap DB query.
+func (c *Correlator) Backfill(ctx context.Context, legacy *protect.LegacyClient) error {
+	from, ok, err := c.db.EarliestNonProtectClipStart()
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil // every clip already has a real Protect match
+	}
+	to := time.Now()
+
+	events, err := legacy.Events(ctx, from, to)
+	if err != nil {
+		return err
+	}
+
+	if err := c.RefreshCameraDirectory(); err != nil {
+		c.log.Warn("refreshing camera directory before backfill failed", "error", err)
+	}
+
+	var stored, unknownCamera int
+	for _, ev := range events {
+		cameraKey, ok := c.lookupCameraKey(ev.Camera)
+		if !ok {
+			unknownCamera++
+			continue
+		}
+		start := time.UnixMilli(ev.Start)
+		var end *time.Time
+		if ev.End != nil {
+			t := time.UnixMilli(*ev.End)
+			end = &t
+		}
+		raw, _ := json.Marshal(ev)
+		if err := c.db.InsertEvent(ev.Camera, cameraKey, ev.SmartDetectTypes[0], start, end, string(raw)); err != nil {
+			c.log.Error("storing backfilled event failed", "error", err)
+			continue
+		}
+		stored++
+	}
+
+	upgraded, err := c.reclassifyNonProtectClips()
+	if err != nil {
+		return err
+	}
+
+	c.log.Info("backfill complete",
+		"from", from, "to", to, "events_fetched", len(events),
+		"events_stored", stored, "unknown_camera", unknownCamera, "clips_upgraded", upgraded)
+	return nil
+}
+
+// reclassifyNonProtectClips re-checks every clip that isn't already
+// protect-sourced against the events table, upgrading it if a match is now
+// available (from backfill having just stored one).
+func (c *Correlator) reclassifyNonProtectClips() (int, error) {
+	clips, err := c.db.NonProtectClips()
+	if err != nil {
+		return 0, err
+	}
+
+	var upgraded int
+	for _, clip := range clips {
+		eventType, found, err := c.db.FindOverlappingEvent(clip.CameraKey, clip.Start, clip.End, overlapTolerance)
+		if err != nil {
+			c.log.Error("finding overlapping event failed", "clip_id", clip.ID, "error", err)
+			continue
+		}
+		if !found {
+			continue
+		}
+		if err := c.db.SetClipClassification(clip.ID, eventType, "protect"); err != nil {
+			c.log.Error("upgrading classification failed", "clip_id", clip.ID, "error", err)
+			continue
+		}
+		upgraded++
+	}
+	return upgraded, nil
 }
 
 // RunClassifier periodically classifies clips that don't have a real

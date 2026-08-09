@@ -92,7 +92,7 @@ func (c *Correlator) OnEvent(ev protect.SmartDetectEvent) {
 		return
 	}
 
-	if err := c.db.InsertEvent(ev.CameraID, cameraKey, ev.Type, ev.Start, ev.End, ev.RawJSON); err != nil {
+	if err := c.db.InsertEvent(ev.ID, ev.CameraID, cameraKey, ev.Type, ev.Detail, ev.Start, ev.End, ev.RawJSON); err != nil {
 		c.log.Error("storing protect event failed", "error", err)
 		return
 	}
@@ -101,10 +101,12 @@ func (c *Correlator) OnEvent(ev protect.SmartDetectEvent) {
 
 // Backfill fetches historical events from the earliest still-not-protect-
 // classified clip's start time up to now, stores them, and re-runs
-// classification for every clip that isn't already protect-sourced —
-// including ones already given a heuristic guess, which get upgraded if a
-// real match turns up. Safe to call repeatedly (e.g. on a periodic timer):
-// with nothing left to backfill it's just one cheap DB query.
+// classification for every clip — including ones already protect-sourced,
+// in case a type-derivation fix (like PickPrimaryType's priority ordering)
+// means the same underlying event now resolves to a better answer. Safe to
+// call repeatedly (e.g. on a periodic timer): with nothing left to backfill
+// it's just one cheap DB query, and reclassification skips any clip whose
+// stored classification already matches what's found.
 func (c *Correlator) Backfill(ctx context.Context, legacy *protect.LegacyClient) error {
 	from, ok, err := c.db.EarliestNonProtectClipStart()
 	if err != nil {
@@ -138,36 +140,37 @@ func (c *Correlator) Backfill(ctx context.Context, legacy *protect.LegacyClient)
 			end = &t
 		}
 		raw, _ := json.Marshal(ev)
-		if err := c.db.InsertEvent(ev.Camera, cameraKey, ev.SmartDetectTypes[0], start, end, string(raw)); err != nil {
+		if err := c.db.InsertEvent(ev.ID, ev.Camera, cameraKey, ev.PrimaryType, ev.Detail, start, end, string(raw)); err != nil {
 			c.log.Error("storing backfilled event failed", "error", err)
 			continue
 		}
 		stored++
 	}
 
-	upgraded, err := c.reclassifyNonProtectClips()
+	upgraded, err := c.reclassifyAllClips()
 	if err != nil {
 		return err
 	}
 
 	c.log.Info("backfill complete",
 		"from", from, "to", to, "events_fetched", len(events),
-		"events_stored", stored, "unknown_camera", unknownCamera, "clips_upgraded", upgraded)
+		"events_stored", stored, "unknown_camera", unknownCamera, "clips_changed", upgraded)
 	return nil
 }
 
-// reclassifyNonProtectClips re-checks every clip that isn't already
-// protect-sourced against the events table, upgrading it if a match is now
-// available (from backfill having just stored one).
-func (c *Correlator) reclassifyNonProtectClips() (int, error) {
-	clips, err := c.db.NonProtectClips()
+// reclassifyAllClips re-checks every clip against the events table,
+// updating it if the best available match differs from what's currently
+// stored (whether that's upgrading a heuristic guess or correcting an
+// earlier protect match after a type-derivation fix).
+func (c *Correlator) reclassifyAllClips() (int, error) {
+	clips, err := c.db.ListClips(db.ClipFilter{})
 	if err != nil {
 		return 0, err
 	}
 
-	var upgraded int
+	var changed int
 	for _, clip := range clips {
-		eventType, found, err := c.db.FindOverlappingEvent(clip.CameraKey, clip.Start, clip.End, overlapTolerance)
+		eventType, detail, found, err := c.db.FindOverlappingEvent(clip.CameraKey, clip.Start, clip.End, overlapTolerance)
 		if err != nil {
 			c.log.Error("finding overlapping event failed", "clip_id", clip.ID, "error", err)
 			continue
@@ -175,13 +178,16 @@ func (c *Correlator) reclassifyNonProtectClips() (int, error) {
 		if !found {
 			continue
 		}
-		if err := c.db.SetClipClassification(clip.ID, eventType, "protect"); err != nil {
-			c.log.Error("upgrading classification failed", "clip_id", clip.ID, "error", err)
+		if clip.EventSource == "protect" && clip.EventType == eventType && clip.EventDetail == detail {
+			continue // already correct
+		}
+		if err := c.db.SetClipClassification(clip.ID, eventType, "protect", detail); err != nil {
+			c.log.Error("updating classification failed", "clip_id", clip.ID, "error", err)
 			continue
 		}
-		upgraded++
+		changed++
 	}
-	return upgraded, nil
+	return changed, nil
 }
 
 // RunClassifier periodically classifies clips that don't have a real
@@ -209,13 +215,13 @@ func classifyOnce(database *db.DB, log *slog.Logger) {
 
 	var matched, heuristic, deferred int
 	for _, clip := range clips {
-		eventType, found, err := database.FindOverlappingEvent(clip.CameraKey, clip.Start, clip.End, overlapTolerance)
+		eventType, detail, found, err := database.FindOverlappingEvent(clip.CameraKey, clip.Start, clip.End, overlapTolerance)
 		if err != nil {
 			log.Error("finding overlapping event failed", "clip_id", clip.ID, "error", err)
 			continue
 		}
 		if found {
-			if err := database.SetClipClassification(clip.ID, eventType, "protect"); err != nil {
+			if err := database.SetClipClassification(clip.ID, eventType, "protect", detail); err != nil {
 				log.Error("setting classification failed", "clip_id", clip.ID, "error", err)
 				continue
 			}
@@ -229,7 +235,7 @@ func classifyOnce(database *db.DB, log *slog.Logger) {
 		}
 
 		guess := heuristicType(time.Duration(clip.DurationS) * time.Second)
-		if err := database.SetClipClassification(clip.ID, guess, "heuristic"); err != nil {
+		if err := database.SetClipClassification(clip.ID, guess, "heuristic", ""); err != nil {
 			log.Error("setting heuristic classification failed", "clip_id", clip.ID, "error", err)
 			continue
 		}

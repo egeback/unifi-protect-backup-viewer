@@ -141,6 +141,7 @@ function renderGrid() {
         <span class="card-camera">${escapeHtml(clip.camera)}</span>
         <span class="${badgeClass(clip.event_type)}">${escapeHtml(badgeLabel(clip.event_type))}</span>
       </div>
+      ${clip.event_detail ? `<div class="card-detail">${escapeHtml(clip.event_detail)}</div>` : ""}
     `;
 
     card.appendChild(thumb);
@@ -164,8 +165,9 @@ function openModal(index) {
   video.src = clip.stream_url;
 
   document.getElementById("player-camera").textContent = clip.camera;
+  const detail = clip.event_detail ? ` · ${clip.event_detail}` : "";
   document.getElementById("player-time").textContent =
-    `${clip.day} ${fmtTime(clip.start)} (${fmtDuration(clip.duration_s)}) · ${badgeLabel(clip.event_type)}`;
+    `${clip.day} ${fmtTime(clip.start)} (${fmtDuration(clip.duration_s)}) · ${badgeLabel(clip.event_type)}${detail}`;
   document.getElementById("player-download").href = clip.download_url;
 
   document.getElementById("player-modal").hidden = false;

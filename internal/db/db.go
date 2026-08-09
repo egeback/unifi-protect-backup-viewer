@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS clips (
 	mtime           INTEGER NOT NULL,
 	event_type      TEXT NOT NULL DEFAULT 'unknown',
 	event_source    TEXT NOT NULL DEFAULT 'unknown', -- protect | heuristic | unknown
+	event_detail    TEXT NOT NULL DEFAULT '', -- license plate text or matched face name, if any
 	thumbnail_ready INTEGER NOT NULL DEFAULT 0,
 	indexed_at      INTEGER NOT NULL
 );
@@ -33,9 +34,14 @@ CREATE INDEX IF NOT EXISTS idx_clips_event_type ON clips(event_type);
 
 CREATE TABLE IF NOT EXISTS events (
 	id           INTEGER PRIMARY KEY AUTOINCREMENT,
+	source_id    TEXT NOT NULL UNIQUE, -- Protect's own event id; upserted on to avoid
+	                                   -- accumulating conflicting rows as a live event's
+	                                   -- classification gets refined across several updates,
+	                                   -- or backfill re-derives a type after a logic fix.
 	camera_id    TEXT NOT NULL,
 	camera_key   TEXT NOT NULL, -- normalized camera name, for correlation
 	type         TEXT NOT NULL,
+	detail       TEXT NOT NULL DEFAULT '', -- license plate text or matched face name, if any
 	start_ts     INTEGER NOT NULL,
 	end_ts       INTEGER,
 	raw_json     TEXT NOT NULL,
@@ -79,6 +85,7 @@ type Clip struct {
 	MTime          time.Time
 	EventType      string
 	EventSource    string
+	EventDetail    string
 	ThumbnailReady bool
 	IndexedAt      time.Time
 }
@@ -134,31 +141,6 @@ func (d *DB) UnclassifiedClips() ([]Clip, error) {
 	return clips, rows.Err()
 }
 
-// NonProtectClips returns every clip that doesn't yet have a real Protect
-// event match — both event_source = 'unknown' (not yet processed at all)
-// and 'heuristic' (already given a best-effort guess, but still eligible
-// to be upgraded if a real historical event turns up via backfill).
-func (d *DB) NonProtectClips() ([]Clip, error) {
-	rows, err := d.Query(`SELECT id, path, day, camera_name, camera_key, start_ts, end_ts, duration_s FROM clips WHERE event_source != 'protect'`)
-	if err != nil {
-		return nil, fmt.Errorf("querying non-protect clips: %w", err)
-	}
-	defer rows.Close()
-
-	var clips []Clip
-	for rows.Next() {
-		var c Clip
-		var startTs, endTs int64
-		if err := rows.Scan(&c.ID, &c.Path, &c.Day, &c.CameraName, &c.CameraKey, &startTs, &endTs, &c.DurationS); err != nil {
-			return nil, fmt.Errorf("scanning clip row: %w", err)
-		}
-		c.Start = time.Unix(startTs, 0)
-		c.End = time.Unix(endTs, 0)
-		clips = append(clips, c)
-	}
-	return clips, rows.Err()
-}
-
 // EarliestNonProtectClipStart returns the start time of the oldest clip
 // that still isn't protect-sourced, i.e. how far back a backfill needs to
 // look. ok is false if every clip already has a real Protect match.
@@ -174,9 +156,9 @@ func (d *DB) EarliestNonProtectClipStart() (t time.Time, ok bool, err error) {
 	return time.Unix(*startTs, 0), true, nil
 }
 
-// SetClipClassification updates a clip's event_type/event_source after correlation.
-func (d *DB) SetClipClassification(id int64, eventType, eventSource string) error {
-	_, err := d.Exec(`UPDATE clips SET event_type = ?, event_source = ? WHERE id = ?`, eventType, eventSource, id)
+// SetClipClassification updates a clip's event_type/event_source/event_detail after correlation.
+func (d *DB) SetClipClassification(id int64, eventType, eventSource, detail string) error {
+	_, err := d.Exec(`UPDATE clips SET event_type = ?, event_source = ?, event_detail = ? WHERE id = ?`, eventType, eventSource, detail, id)
 	if err != nil {
 		return fmt.Errorf("updating classification for clip %d: %w", id, err)
 	}
@@ -219,8 +201,8 @@ func (d *DB) ClipByID(id int64) (Clip, error) {
 	var c Clip
 	var startTs, endTs, mtime, indexedAt int64
 	var thumbReady int
-	err := d.QueryRow(`SELECT id, path, day, camera_name, camera_key, start_ts, end_ts, duration_s, size_bytes, mtime, event_type, event_source, thumbnail_ready, indexed_at FROM clips WHERE id = ?`, id).
-		Scan(&c.ID, &c.Path, &c.Day, &c.CameraName, &c.CameraKey, &startTs, &endTs, &c.DurationS, &c.SizeBytes, &mtime, &c.EventType, &c.EventSource, &thumbReady, &indexedAt)
+	err := d.QueryRow(`SELECT id, path, day, camera_name, camera_key, start_ts, end_ts, duration_s, size_bytes, mtime, event_type, event_source, event_detail, thumbnail_ready, indexed_at FROM clips WHERE id = ?`, id).
+		Scan(&c.ID, &c.Path, &c.Day, &c.CameraName, &c.CameraKey, &startTs, &endTs, &c.DurationS, &c.SizeBytes, &mtime, &c.EventType, &c.EventSource, &c.EventDetail, &thumbReady, &indexedAt)
 	if err != nil {
 		return Clip{}, fmt.Errorf("fetching clip %d: %w", id, err)
 	}
@@ -243,7 +225,7 @@ type ClipFilter struct {
 
 // ListClips returns clips matching the filter, newest first.
 func (d *DB) ListClips(f ClipFilter) ([]Clip, error) {
-	query := `SELECT id, path, day, camera_name, camera_key, start_ts, end_ts, duration_s, size_bytes, event_type, event_source, thumbnail_ready FROM clips WHERE 1=1`
+	query := `SELECT id, path, day, camera_name, camera_key, start_ts, end_ts, duration_s, size_bytes, event_type, event_source, event_detail, thumbnail_ready FROM clips WHERE 1=1`
 	var args []any
 	if f.Day != "" {
 		query += ` AND day = ?`
@@ -274,7 +256,7 @@ func (d *DB) ListClips(f ClipFilter) ([]Clip, error) {
 		var c Clip
 		var startTs, endTs int64
 		var thumbReady int
-		if err := rows.Scan(&c.ID, &c.Path, &c.Day, &c.CameraName, &c.CameraKey, &startTs, &endTs, &c.DurationS, &c.SizeBytes, &c.EventType, &c.EventSource, &thumbReady); err != nil {
+		if err := rows.Scan(&c.ID, &c.Path, &c.Day, &c.CameraName, &c.CameraKey, &startTs, &endTs, &c.DurationS, &c.SizeBytes, &c.EventType, &c.EventSource, &c.EventDetail, &thumbReady); err != nil {
 			return nil, fmt.Errorf("scanning clip row: %w", err)
 		}
 		c.Start = time.Unix(startTs, 0)
@@ -329,42 +311,55 @@ type Camera struct {
 	ClipCount int
 }
 
-// InsertEvent stores a Protect smart-detect event for later correlation.
-func (d *DB) InsertEvent(cameraID, cameraKey, eventType string, start time.Time, end *time.Time, rawJSON string) error {
+// InsertEvent stores a Protect smart-detect event for later correlation,
+// upserting on Protect's own event id (sourceID) so a live event refined
+// across several "add"/"update" messages, or a historical event re-derived
+// by backfill after a classification-logic fix, ends up as one row with
+// the latest known type/detail — not an ever-growing pile of conflicting
+// duplicates for the same real-world event.
+func (d *DB) InsertEvent(sourceID, cameraID, cameraKey, eventType, detail string, start time.Time, end *time.Time, rawJSON string) error {
 	var endTs any
 	if end != nil {
 		endTs = end.Unix()
 	}
-	_, err := d.Exec(`INSERT INTO events (camera_id, camera_key, type, start_ts, end_ts, raw_json, received_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		cameraID, cameraKey, eventType, start.Unix(), endTs, rawJSON, time.Now().Unix())
+	_, err := d.Exec(`
+		INSERT INTO events (source_id, camera_id, camera_key, type, detail, start_ts, end_ts, raw_json, received_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(source_id) DO UPDATE SET
+			type = excluded.type,
+			detail = excluded.detail,
+			end_ts = excluded.end_ts,
+			raw_json = excluded.raw_json,
+			received_at = excluded.received_at
+	`, sourceID, cameraID, cameraKey, eventType, detail, start.Unix(), endTs, rawJSON, time.Now().Unix())
 	if err != nil {
-		return fmt.Errorf("inserting event: %w", err)
+		return fmt.Errorf("upserting event %s: %w", sourceID, err)
 	}
 	return nil
 }
 
-// FindOverlappingEvent returns the smart-detect event type for a camera
-// whose time window overlaps [start,end] (with a small tolerance), if any.
-func (d *DB) FindOverlappingEvent(cameraKey string, start, end time.Time, tolerance time.Duration) (eventType string, found bool, err error) {
+// FindOverlappingEvent returns the smart-detect event type/detail for a
+// camera whose time window overlaps [start,end] (with a small tolerance), if any.
+func (d *DB) FindOverlappingEvent(cameraKey string, start, end time.Time, tolerance time.Duration) (eventType, detail string, found bool, err error) {
 	lo := start.Add(-tolerance).Unix()
 	hi := end.Add(tolerance).Unix()
 	row := d.QueryRow(`
-		SELECT type FROM events
+		SELECT type, detail FROM events
 		WHERE camera_key = ?
 		  AND start_ts <= ?
 		  AND (end_ts IS NULL OR end_ts >= ?)
 		ORDER BY start_ts DESC
 		LIMIT 1
 	`, cameraKey, hi, lo)
-	var t string
-	err = row.Scan(&t)
+	var t, det string
+	err = row.Scan(&t, &det)
 	if err == sql.ErrNoRows {
-		return "", false, nil
+		return "", "", false, nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("finding overlapping event: %w", err)
+		return "", "", false, fmt.Errorf("finding overlapping event: %w", err)
 	}
-	return t, true, nil
+	return t, det, true, nil
 }
 
 // PruneOldEvents deletes events older than the given cutoff, keeping the table small.

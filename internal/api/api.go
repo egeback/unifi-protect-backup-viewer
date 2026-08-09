@@ -115,6 +115,7 @@ type clipJSON struct {
 	SizeBytes    int64  `json:"size_bytes"`
 	EventType    string `json:"event_type"`
 	EventSource  string `json:"event_source"`
+	EventDetail  string `json:"event_detail"`
 	ThumbnailURL string `json:"thumbnail_url"`
 	StreamURL    string `json:"stream_url"`
 	DownloadURL  string `json:"download_url"`
@@ -133,6 +134,7 @@ func toClipJSON(c db.Clip) clipJSON {
 		SizeBytes:    c.SizeBytes,
 		EventType:    c.EventType,
 		EventSource:  c.EventSource,
+		EventDetail:  c.EventDetail,
 		ThumbnailURL: "/api/clips/" + id + "/thumbnail",
 		StreamURL:    "/api/clips/" + id + "/stream",
 		DownloadURL:  "/api/clips/" + id + "/download",

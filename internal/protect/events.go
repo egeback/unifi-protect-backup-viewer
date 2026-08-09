@@ -13,11 +13,16 @@ import (
 
 // SmartDetectEvent is our normalized view of a Protect event message.
 type SmartDetectEvent struct {
+	ID       string // Protect's own event id, used to dedupe/upsert
 	CameraID string
 	Type     string
-	Start    time.Time
-	End      *time.Time
-	RawJSON  string
+	// Detail (license plate text, matched face name) is always empty here:
+	// the live websocket payload doesn't include the metadata it lives in,
+	// unlike the legacy history API (see legacy.go). Only backfill fills it in.
+	Detail  string
+	Start   time.Time
+	End     *time.Time
+	RawJSON string
 }
 
 // wsEnvelope and wsItem match the confirmed live payload shape, e.g.:
@@ -28,9 +33,8 @@ type SmartDetectEvent struct {
 //
 // A single real-world detection produces several messages over its
 // lifetime (an "add", then "update"s as classification refines and again
-// once it ends) — all sharing the same item.id. We don't dedupe these; each
-// just becomes its own row in the events table, which is harmless for
-// correlation purposes (any overlapping row is a match) and self-prunes.
+// once it ends) — all sharing the same item.id. The events table upserts
+// on that id, so these collapse into one row reflecting the latest state.
 type wsEnvelope struct {
 	Type string `json:"type"` // "add" | "update"
 	Item wsItem `json:"item"`
@@ -129,13 +133,14 @@ func extractEvent(msg []byte) (SmartDetectEvent, bool) {
 
 	eventType := item.Type
 	if len(item.SmartDetectTypes) > 0 {
-		eventType = item.SmartDetectTypes[0]
+		eventType = PickPrimaryType(item.SmartDetectTypes)
 	}
 	if eventType == "" {
 		return SmartDetectEvent{}, false
 	}
 
 	result := SmartDetectEvent{
+		ID:       item.ID,
 		CameraID: item.Device,
 		Type:     eventType,
 		Start:    time.UnixMilli(item.Start),

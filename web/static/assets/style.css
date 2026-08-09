@@ -158,6 +158,12 @@ body {
 .card-time { font-weight: 600; font-size: 0.95rem; }
 .card-meta { display: flex; justify-content: space-between; align-items: center; }
 .card-camera { color: var(--text-dim); font-size: 0.8rem; }
+.card-detail {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-family: ui-monospace, "SF Mono", monospace;
+  letter-spacing: 0.03em;
+}
 .badge {
   font-size: 0.7rem;
   padding: 0.15rem 0.5rem;

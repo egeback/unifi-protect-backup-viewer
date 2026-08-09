@@ -90,12 +90,57 @@ func (c *LegacyClient) ensureLoggedIn(ctx context.Context) error {
 // Events() — system/access events (camera == nil) and not-yet-classified
 // ones (empty SmartDetectTypes) are filtered out.
 type LegacyEvent struct {
-	ID               string
-	Type             string
-	Camera           string
-	SmartDetectTypes []string
-	Start            int64 // unix ms
-	End              *int64
+	ID          string
+	PrimaryType string // best single classification, via PickPrimaryType
+	// Detail is a license plate reading or a recognized face's name, when
+	// Protect's own object/face recognition matched one confidently enough
+	// — empty otherwise (e.g. no "Known Faces" configured, or no match).
+	// Unlike the live websocket, this API's response includes the metadata
+	// this comes from.
+	Detail string
+	Camera string
+	Start  int64 // unix ms
+	End    *int64
+}
+
+// detectedThumbnail mirrors the parts of a legacy event's
+// metadata.detectedThumbnails entries we care about. Best-effort: this is
+// an undocumented internal shape, so any field that's missing or not what
+// we expect just yields an empty Detail rather than an error.
+type detectedThumbnail struct {
+	Type       string `json:"type"`
+	Name       string `json:"name"`
+	Attributes struct {
+		MatchedName string `json:"matchedName"`
+	} `json:"attributes"`
+}
+
+// pickDetail finds the license plate reading or matched face name
+// associated with the chosen primary type, if any. A license plate reading
+// lives inside the "vehicle" thumbnail entry (labeled with
+// "smartDetectType:licensePlate"), not a separate "licensePlate" one.
+func pickDetail(primaryType string, thumbnails []detectedThumbnail) string {
+	var wantType string
+	switch primaryType {
+	case "licensePlate", "vehicle":
+		wantType = "vehicle"
+	case "face":
+		wantType = "face"
+	default:
+		return ""
+	}
+	for _, th := range thumbnails {
+		if th.Type != wantType {
+			continue
+		}
+		if th.Name != "" {
+			return th.Name
+		}
+		if th.Attributes.MatchedName != "" {
+			return th.Attributes.MatchedName
+		}
+	}
+	return ""
 }
 
 // Events fetches historical events in [start, end]. The API has shown no
@@ -135,11 +180,13 @@ func (c *LegacyClient) Events(ctx context.Context, start, end time.Time) ([]Lega
 
 	var raw []struct {
 		ID               string   `json:"id"`
-		Type             string   `json:"type"`
 		Camera           *string  `json:"camera"`
 		SmartDetectTypes []string `json:"smartDetectTypes"`
 		Start            int64    `json:"start"`
 		End              *int64   `json:"end"`
+		Metadata         struct {
+			DetectedThumbnails []detectedThumbnail `json:"detectedThumbnails"`
+		} `json:"metadata"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decoding events response: %w", err)
@@ -150,13 +197,14 @@ func (c *LegacyClient) Events(ctx context.Context, start, end time.Time) ([]Lega
 		if r.Camera == nil || *r.Camera == "" || len(r.SmartDetectTypes) == 0 {
 			continue // system/access events, or not yet classified
 		}
+		primary := PickPrimaryType(r.SmartDetectTypes)
 		events = append(events, LegacyEvent{
-			ID:               r.ID,
-			Type:             r.Type,
-			Camera:           *r.Camera,
-			SmartDetectTypes: r.SmartDetectTypes,
-			Start:            r.Start,
-			End:              r.End,
+			ID:          r.ID,
+			PrimaryType: primary,
+			Detail:      pickDetail(primary, r.Metadata.DetectedThumbnails),
+			Camera:      *r.Camera,
+			Start:       r.Start,
+			End:         r.End,
 		})
 	}
 	return events, nil

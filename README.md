@@ -56,6 +56,10 @@ openssl rand -hex 32                            # -> SESSION_SECRET
 docker compose up --build -d
 ```
 
+Prebuilt images (linux/amd64) are published to
+`ghcr.io/egeback/unifi-protect-backup-viewer:<version>` for every GitHub
+release — set `image:` to that instead of `build: .` if you'd rather not build.
+
 See [DEPLOY.md](DEPLOY.md) for details, including running without hardware
 transcoding if you don't have an Intel iGPU.
 

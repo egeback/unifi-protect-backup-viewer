@@ -1,6 +1,6 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 
-FROM golang:1.25-bookworm AS build
+FROM golang:1.25-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -8,7 +8,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /out/unifi-protect-backup-viewer .
 RUN CGO_ENABLED=0 go build -o /out/hashpw ./cmd/hashpw
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
 
 # intel-media-va-driver-non-free (iHD) is needed for full QuickSync codec
 # coverage on newer Intel iGPUs (the free intel-media-va-driver's coverage

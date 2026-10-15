@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/egeback/unifi-protect-backup-viewer/internal/db"
@@ -29,6 +30,12 @@ type Indexer struct {
 	interval time.Duration
 	log      *slog.Logger
 
+	// warnedUnparseable remembers files already reported as unparseable, so each is
+	// logged once per process instead of on every scan (KAN-633: 2 598 files × every
+	// 10 min drowned the central log). The count is still in "scan complete".
+	warnedMu          sync.Mutex
+	warnedUnparseable map[string]struct{}
+
 	// OnNewClips is called with the number of newly-seen clips after each
 	// scan, letting the caller kick off dependent work (thumbnails, correlation).
 	OnNewClips func(count int)
@@ -36,6 +43,20 @@ type Indexer struct {
 
 func New(database *db.DB, nvrPath string, interval time.Duration, log *slog.Logger) *Indexer {
 	return &Indexer{db: database, nvrPath: nvrPath, interval: interval, log: log}
+}
+
+// firstUnparseable reports whether name has not been warned about before, and records it.
+func (idx *Indexer) firstUnparseable(name string) bool {
+	idx.warnedMu.Lock()
+	defer idx.warnedMu.Unlock()
+	if idx.warnedUnparseable == nil {
+		idx.warnedUnparseable = map[string]struct{}{}
+	}
+	if _, seen := idx.warnedUnparseable[name]; seen {
+		return false
+	}
+	idx.warnedUnparseable[name] = struct{}{}
+	return true
 }
 
 // Run performs an initial scan, then rescans periodically and whenever
@@ -161,7 +182,9 @@ func (idx *Indexer) scanOnce(ctx context.Context) {
 			parsed, err := filenameparse.Parse(f.Name())
 			if err != nil {
 				parseErrors++
-				idx.log.Warn("skipping unparseable filename", "file", f.Name(), "error", err)
+				if idx.firstUnparseable(f.Name()) {
+					idx.log.Warn("skipping unparseable filename", "file", f.Name(), "error", err)
+				}
 				continue
 			}
 

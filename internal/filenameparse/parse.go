@@ -2,6 +2,11 @@
 // the filenames UniFi Protect's NAS export produces, e.g.:
 //
 //	"Garden - Shed 8-8-2026, 2.04.06pm GMT+2 - 8-8-2026, 2.04.27pm GMT+2.mp4"
+//	"Garden - Shed 8-21-2026, 1.16.45pm GMT+2 - 8-21-2026, 1.17.08pm GMT+2 [A89C6C480F66].mp4"
+//
+// The bracketed suffix is the camera's id (its MAC). Protect started adding it
+// for one of our cameras on 2026-08-21 (clips before that day have no suffix,
+// none after), so both forms must parse (KAN-633).
 //
 // The part before the first date is the camera's display name as written by
 // the SMB export, which strips any non-ASCII character entirely rather than
@@ -19,12 +24,13 @@ import (
 
 var filenamePattern = regexp.MustCompile(
 	`^(.+?) (\d{1,2})-(\d{1,2})-(\d{4}), (\d{1,2})\.(\d{2})\.(\d{2})(am|pm) GMT([+-]\d+) - ` +
-		`(\d{1,2})-(\d{1,2})-(\d{4}), (\d{1,2})\.(\d{2})\.(\d{2})(am|pm) GMT([+-]\d+)\.mp4$`,
+		`(\d{1,2})-(\d{1,2})-(\d{4}), (\d{1,2})\.(\d{2})\.(\d{2})(am|pm) GMT([+-]\d+)(?: \[([0-9A-Fa-f]+)\])?\.mp4$`,
 )
 
 // Result holds the metadata recovered from a clip filename.
 type Result struct {
 	CameraName string
+	CameraID   string // from the optional " [ID]" suffix, uppercase; empty when absent
 	Start      time.Time
 	End        time.Time
 }
@@ -49,6 +55,7 @@ func Parse(filename string) (Result, error) {
 
 	return Result{
 		CameraName: strings.TrimSpace(m[1]),
+		CameraID:   strings.ToUpper(m[18]),
 		Start:      start,
 		End:        end,
 	}, nil

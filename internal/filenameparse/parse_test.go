@@ -8,6 +8,7 @@ func TestParse(t *testing.T) {
 		wantCamera string
 		wantStart  string
 		wantEnd    string
+		wantID     string
 	}{
 		{
 			filename:   "Garden - Trdgrden 8-8-2026, 2.04.06pm GMT+2 - 8-8-2026, 2.04.27pm GMT+2.mp4",
@@ -28,6 +29,14 @@ func TestParse(t *testing.T) {
 			wantEnd:    "2026-08-08T11:36:41+02:00",
 		},
 		{
+			// KAN-633: Protect appends the camera id since 2026-08-21 (real filename from the NAS export)
+			filename:   "Baksidan - Frrdet 8-21-2026, 1.16.45pm GMT+2 - 8-21-2026, 1.17.08pm GMT+2 [A89C6C480F66].mp4",
+			wantCamera: "Baksidan - Frrdet",
+			wantStart:  "2026-08-21T13:16:45+02:00",
+			wantEnd:    "2026-08-21T13:17:08+02:00",
+			wantID:     "A89C6C480F66",
+		},
+		{
 			filename:   "Driveway 8-9-2026, 12.10.14pm GMT+2 - 8-9-2026, 12.10.38pm GMT+2.mp4",
 			wantCamera: "Driveway",
 			wantStart:  "2026-08-09T12:10:14+02:00",
@@ -42,6 +51,9 @@ func TestParse(t *testing.T) {
 		}
 		if got.CameraName != c.wantCamera {
 			t.Errorf("Parse(%q).CameraName = %q, want %q", c.filename, got.CameraName, c.wantCamera)
+		}
+		if got.CameraID != c.wantID {
+			t.Errorf("Parse(%q).CameraID = %q, want %q", c.filename, got.CameraID, c.wantID)
 		}
 		if got.Start.Format("2006-01-02T15:04:05-07:00") != c.wantStart {
 			t.Errorf("Parse(%q).Start = %v, want %v", c.filename, got.Start, c.wantStart)
@@ -66,5 +78,17 @@ func TestNormalizeCameraName(t *testing.T) {
 	}
 	if a != "gardentrdgrden" {
 		t.Fatalf("unexpected normalized form: %q", a)
+	}
+}
+
+func TestParseInvalidCameraIDSuffix(t *testing.T) {
+	for _, f := range []string{
+		"Driveway 8-9-2026, 12.10.14pm GMT+2 - 8-9-2026, 12.10.38pm GMT+2 [].mp4",
+		"Driveway 8-9-2026, 12.10.14pm GMT+2 - 8-9-2026, 12.10.38pm GMT+2 [not-hex].mp4",
+		"Driveway 8-9-2026, 12.10.14pm GMT+2 - 8-9-2026, 12.10.38pm GMT+2[A89C6C480F66].mp4",
+	} {
+		if _, err := Parse(f); err == nil {
+			t.Errorf("Parse(%q): expected error", f)
+		}
 	}
 }
